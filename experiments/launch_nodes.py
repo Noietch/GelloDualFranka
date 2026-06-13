@@ -13,6 +13,25 @@ class Args:
     robot_port: int = 6001
     hostname: str = "127.0.0.1"
     robot_ip: str = "192.168.1.10"
+    sim_arm: str = "none"
+    """For sim robots: place the base at one arm of the real dual-arm rig.
+    'left', 'right', or 'none' (upright). Transforms are the real install
+    (right is the mirror of the measured left install)."""
+
+
+# Real dual-arm base install transforms, from the rig's kinematics.yaml
+# (urdf/kinematics.yaml: left/right base pose as xyz + rpy). Converted to
+# MuJoCo quat (wxyz) here. These are the authoritative measured installs.
+SIM_ARM_BASE = {
+    "left": {
+        "quat": [0.865807, -0.436878, 0.022288, -0.242939],
+        "pos": [0.036395, 0.050681, 0.0508858],
+    },
+    "right": {
+        "quat": [0.865807, 0.436878, 0.022288, 0.242939],
+        "pos": [0.036395, -0.050681, 0.0508858],
+    },
+}
 
 
 def launch_robot_server(args: Args):
@@ -37,9 +56,28 @@ def launch_robot_server(args: Args):
         )
         xml = MENAGERIE_ROOT / "franka_emika_panda" / "panda.xml"
         gripper_xml = None
+        base = SIM_ARM_BASE.get(args.sim_arm, {})
         server = MujocoRobotServer(
-            xml_path=xml, gripper_xml_path=gripper_xml, port=port, host=args.hostname
+            xml_path=xml, gripper_xml_path=gripper_xml, port=port, host=args.hostname,
+            base_quat=base.get("quat"), base_pos=base.get("pos")
         )
+        server.serve()
+    elif args.robot == "sim_bimanual_panda":
+        from gello.robots.sim_robot import MujocoRobotServer
+
+        MENAGERIE_ROOT: Path = (
+            Path(__file__).parent.parent / "third_party" / "mujoco_menagerie"
+        )
+        xml = str(MENAGERIE_ROOT / "franka_emika_panda" / "panda.xml")
+        # Both arms at their real install transforms (runtime-assembled, no
+        # separate static xml). Joint order: [left 7 arm + gripper, right ...].
+        arms = [
+            {"xml": xml, "quat": SIM_ARM_BASE["left"]["quat"],
+             "pos": SIM_ARM_BASE["left"]["pos"], "name": "left"},
+            {"xml": xml, "quat": SIM_ARM_BASE["right"]["quat"],
+             "pos": SIM_ARM_BASE["right"]["pos"], "name": "right"},
+        ]
+        server = MujocoRobotServer(arms=arms, port=port, host=args.hostname)
         server.serve()
     elif args.robot == "sim_xarm":
         from gello.robots.sim_robot import MujocoRobotServer

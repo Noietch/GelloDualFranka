@@ -15,6 +15,7 @@
 *wandb*
 *wandb_logs*
 outputs/*
+arena.xml
 
 # python
 *__pycache__
@@ -32,3 +33,5 @@ MUJOCO_LOG.TXT
 ros2/build/
 ros2/install/
 ros2/log/
+
+work_dirs/*
