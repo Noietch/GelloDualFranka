@@ -119,6 +119,16 @@ def sync_robot() -> None:
     sim = G.DualArmSim()
     latest = {"left": None, "right": None}
 
+    def reorder(msg) -> Optional[list]:
+        """Pull fr3_joint1..7 out of a JointState BY NAME. joint_state_broadcaster
+        does not guarantee position[] is in fr3_joint1..7 order — indexing
+        position[:7] blindly scrambles the arm. Map name->value instead."""
+        by_name = dict(zip(msg.name, msg.position))
+        try:
+            return [by_name[j] for j in G.FR3_JOINT_NAMES]
+        except KeyError:
+            return None  # arm joints not present yet (e.g. gripper-only msg)
+
     class Mirror(Node):
         def __init__(self):
             super().__init__("gello_sync_robot")
@@ -126,7 +136,7 @@ def sync_robot() -> None:
                 topic = G.ROBOT_STATE_TOPIC.format(ns=name)
                 self.create_subscription(
                     JointState, topic,
-                    lambda msg, n=name: latest.__setitem__(n, list(msg.position[:7])),
+                    lambda msg, n=name: latest.__setitem__(n, reorder(msg)),
                     10,
                 )
                 self.get_logger().info(f"subscribing {topic}")
