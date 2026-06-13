@@ -18,18 +18,18 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$DIR/_ros_env.sh"
 ros_bootstrap || exit 1
 
-ARM_CONFIG="${ARM_CONFIG:-example_fr3_duo_config.yaml}"
-GRIPPER_CONFIG="${GRIPPER_CONFIG:-example_fr3_duo_config_franka_hand.yaml}"
+ARM_CONFIG="${ARM_CONFIG:-example_fr3_config.yaml}"
+GRIPPER_CONFIG="${GRIPPER_CONFIG:-example_fr3_config_franka_hand.yaml}"
 
 echo "==> launching dual-arm impedance controllers ($ARM_CONFIG)"
 ros2 launch franka_fr3_arm_controllers franka_fr3_arm_controllers.launch.py \
     robot_config_file:="$ARM_CONFIG" &
 CTRL_PID=$!
 
-echo "==> launching Franka Hand gripper clients ($GRIPPER_CONFIG)"
-ros2 launch franka_gripper_manager franka_gripper_client.launch.py \
-    config_file:="$GRIPPER_CONFIG" &
-GRIP_PID=$!
+# echo "==> launching Franka Hand gripper clients ($GRIPPER_CONFIG)"
+# ros2 launch franka_gripper_manager franka_gripper_client.launch.py \
+#     config_file:="$GRIPPER_CONFIG" &
+# GRIP_PID=$!
 
 trap 'echo; echo "stopping..."; kill $CTRL_PID $GRIP_PID 2>/dev/null || true' INT TERM
 wait

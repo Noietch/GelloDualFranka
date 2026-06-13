@@ -91,6 +91,7 @@ def teleop_sim() -> None:
                     "left": read_arm_ctrl("left"),
                     "right": read_arm_ctrl("right"),
                 })
+                print(read_arm_ctrl("right"))
                 for _ in range(n_steps):
                     mujoco.mj_step(sim.model, sim.data)
                 viewer.sync()
@@ -186,10 +187,10 @@ def teleop_robot() -> None:
                 if readers[name] is None:
                     continue
                 self.arm_pub[name] = self.create_publisher(
-                    JointState, G.GELLO_PUB_TOPIC.format(ns=name), 10)
+                    JointState, G.GELLO_PUB_TOPIC, 10)
                 self.grip_pub[name] = self.create_publisher(
-                    Float32, G.GRIPPER_TOPIC.format(ns=name), 10)
-                self.get_logger().info(f"publishing {G.GELLO_PUB_TOPIC.format(ns=name)}")
+                    Float32, G.GRIPPER_TOPIC, 10)
+                self.get_logger().info(f"publishing {G.GELLO_PUB_TOPIC}")
             self.timer = self.create_timer(1.0 / G.HZ_ROS, self.tick)
 
         def tick(self):
@@ -197,6 +198,7 @@ def teleop_robot() -> None:
                 if readers[name] is None:
                     continue
                 raw = readers[name].get_joints()
+                print(raw)
                 arm = calibs[name].process(raw[:7])
                 grip = G.map_gripper_rad(
                     raw[-1], cfg["gripper_range_rad"][0], cfg["gripper_range_rad"][1])

@@ -82,8 +82,8 @@ FR3_HOME = [0.0, 0.0, 0.0, -1.57079, 0.0, 1.57079, -0.7853]
 # ROS2 topics (mode sync-robot subscribes / mode teleop-robot publishes).
 # {ns} is filled with the arm namespace ("left"/"right").
 ROBOT_STATE_TOPIC = "/franka/joint_states"   # subscribe (sync-robot)
-GELLO_PUB_TOPIC   = "{ns}/gello/joint_states"     # publish   (teleop-robot)
-GRIPPER_TOPIC     = "{ns}/gripper/gripper_client/target_gripper_width_percent"
+GELLO_PUB_TOPIC   = "/gello/joint_states"     # publish   (teleop-robot)
+GRIPPER_TOPIC     = "/gripper/gripper_client/target_gripper_width_percent"
 FR3_JOINT_NAMES = [f"fr3_joint{i}" for i in range(1, 8)]
 
 # ======================= FR3 constants (real path) =======================
