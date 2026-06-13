@@ -1,0 +1,8 @@
+# Minimal GELLO scripts dependencies (pure-Python only).
+# rclpy is NOT here — it comes from the system ROS2 install (Linux real-robot
+# modes). pyrealsense2 is intentionally excluded (no macOS arm wheel, not needed).
+# dynamixel-sdk is NOT here — installed from the in-repo submodule by setup.sh
+# (third_party/DynamixelSDK/python).
+numpy
+mujoco
+dm_control
