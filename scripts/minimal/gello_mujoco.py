@@ -86,19 +86,7 @@ GELLO_PUB_TOPIC   = "/gello/joint_states"     # publish   (teleop-robot)
 GRIPPER_TOPIC     = "/gripper/gripper_client/target_gripper_width_percent"
 FR3_JOINT_NAMES = [f"fr3_joint{i}" for i in range(1, 8)]
 
-# ======================= FR3 constants (real path) =======================
-# From https://frankarobotics.github.io/docs/robot_specifications.html
-JOINT_POSITION_LIMITS = np.array([
-    [-2.9007, 2.9007],
-    [-1.8361, 1.8361],
-    [-2.9007, 2.9007],
-    [-3.0770, -0.1169],
-    [-2.8763, 2.8763],
-    [0.4398, 4.6216],
-    [-3.0508, 3.0508],
-])
-MID_JOINT_POSITIONS = JOINT_POSITION_LIMITS.mean(axis=1)
-
+# ======================= FR3 constants =======================
 # Centers of each arm joint's valid range, for modulo-wrap (sim path). FR3 7-DOF.
 SIM_RANGE_CENTER = np.array([0.0, 0.0, 0.0, -1.571, 0.0, 1.866, 0.0])
 
@@ -202,6 +190,20 @@ def calib_sim(raw_arm: np.ndarray, offsets, signs) -> np.ndarray:
     return c + np.mod(pos - c + np.pi, 2 * np.pi) - np.pi
 
 
+def calib_real(raw_arm: np.ndarray, offsets, signs) -> np.ndarray:
+    """Real-robot calibration — exactly the official ROS2 node's mapping
+    (franka_gello_state_publisher gello_hardware.read_joint_states):
+
+        pos = (raw - best_offsets) * joint_signs
+
+    Absolute, stateless: same physical GELLO pose -> same joint angle every run.
+    No modulo-wrap, no incremental delta, no joint-limit clip — the downstream
+    C++ joint-impedance controller owns limit handling. (The earlier
+    IncrementalCalibrator made the zero point depend on the startup pose, which
+    offset the whole arm by a near-constant ~pi — the 'real teleop wrong' bug.)"""
+    return (np.asarray(raw_arm) - np.asarray(offsets)) * np.asarray(signs)
+
+
 def map_gripper_deg(raw_gripper: float, open_deg: float, close_deg: float) -> float:
     o, c = np.deg2rad(open_deg), np.deg2rad(close_deg)
     return float(np.clip((raw_gripper - o) / (c - o), 0.0, 1.0))
@@ -209,36 +211,6 @@ def map_gripper_deg(raw_gripper: float, open_deg: float, close_deg: float) -> fl
 
 def map_gripper_rad(raw_gripper: float, open_rad: float, close_rad: float) -> float:
     return float(np.clip((raw_gripper - open_rad) / (close_rad - open_rad), 0.0, 1.0))
-
-
-class IncrementalCalibrator:
-    """Real-robot calibration: normalize once, then track deltas and clip to FR3
-    limits. Supports multi-turn (joint may rotate past +-pi) and never emits a
-    target outside the robot's joint limits. Mirrors the official ROS2 logic."""
-
-    def __init__(self, assembly_offsets, joint_signs):
-        self._offsets = np.asarray(assembly_offsets, dtype=float)
-        self._signs = np.asarray(joint_signs, dtype=float)
-        self._prev_raw: Optional[np.ndarray] = None
-        self._prev: Optional[np.ndarray] = None
-
-    @staticmethod
-    def _normalize(raw, offsets, signs):
-        return (
-            np.mod((raw - offsets) * signs - MID_JOINT_POSITIONS, 2 * np.pi)
-            - np.pi + MID_JOINT_POSITIONS
-        )
-
-    def process(self, raw_arm: np.ndarray) -> np.ndarray:
-        raw_arm = np.asarray(raw_arm, dtype=float)
-        if self._prev is None:
-            self._prev = self._normalize(raw_arm, self._offsets, self._signs)
-            self._prev_raw = raw_arm.copy()
-        delta = (raw_arm - self._prev_raw) * self._signs
-        joints = self._prev + delta
-        self._prev = joints.copy()
-        self._prev_raw = raw_arm.copy()
-        return np.clip(joints, JOINT_POSITION_LIMITS[:, 0], JOINT_POSITION_LIMITS[:, 1])
 
 
 # ============================ MuJoCo dual-arm scene ============================

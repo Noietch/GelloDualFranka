@@ -174,10 +174,6 @@ def teleop_robot() -> None:
     from std_msgs.msg import Float32
 
     readers = _open_readers()
-    calibs = {
-        name: G.IncrementalCalibrator(cfg["real_offsets"], cfg["real_signs"])
-        for name, cfg in G.ARMS.items()
-    }
 
     class Publisher(Node):
         def __init__(self):
@@ -199,7 +195,7 @@ def teleop_robot() -> None:
                     continue
                 raw = readers[name].get_joints()
                 print(raw)
-                arm = calibs[name].process(raw[:7])
+                arm = G.calib_real(raw[:7], cfg["real_offsets"], cfg["real_signs"])
                 grip = G.map_gripper_rad(
                     raw[-1], cfg["gripper_range_rad"][0], cfg["gripper_range_rad"][1])
 
