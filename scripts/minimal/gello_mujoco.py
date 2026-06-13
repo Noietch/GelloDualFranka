@@ -5,12 +5,10 @@ dev container. Only needs: numpy, dynamixel_sdk, mujoco, dm_control.
 This module is a library. The CLI lives in main.py (three modes: teleop-sim,
 sync-robot, teleop-robot). Edit the CONFIG block below to match your hardware.
 
-Two calibration conventions are kept side by side, because the sim path and the
-real path were calibrated separately and use different sign conventions:
-  - sim  (mode teleop-sim): modulo-wrap,  pos = (raw - sim_offsets) * sim_signs
-  - real (mode teleop-robot): incremental delta + FR3 joint-limit clip
-Using the wrong one on the real robot drives joints past their limits — the
-joint4-frozen-at-3.077 symptom. Keep them distinct.
+ONE calibration path (calib_sim: modulo-wrap, pos = (raw - sim_offsets) *
+sim_signs) drives both teleop-sim and teleop-robot, so MuJoCo and the real robot
+get identical joint values. Do not reintroduce a separate "real" calibration —
+that divergence was the cause of "sim ok but real teleop wrong".
 """
 import platform
 import threading
@@ -46,10 +44,9 @@ PORTS = {
 }
 
 # Per-arm calibration. joint_ids = 7 arm servos; gripper_id = the gripper servo.
-# sim_*  : from configs/bimanual.yaml      (modulo-wrap path)
-# real_* : from GELLO calibration results  (incremental + limit-clip path)
-# gripper_deg = (open_deg, close_deg) for the sim path; gripper_range_rad =
-# [open_rad, close_rad] for the real path.
+# sim_* (modulo-wrap path) is THE calibration — used by both teleop-sim and
+# teleop-robot so MuJoCo and the real robot are driven by identical numbers.
+# gripper_deg = (open_deg, close_deg) raw motor degrees.
 ARMS = {
     "left": {
         "joint_ids": [1, 2, 3, 4, 5, 6, 7],
@@ -57,9 +54,6 @@ ARMS = {
         "sim_offsets": [1.571, 4.712, 4.712, 0.0, 3.142, 4.712, 3.142],
         "sim_signs":   [1, 1, 1, 1, 1, -1, 1],
         "gripper_deg": [132, 202],
-        "real_offsets": [3.142, 3.142, 4.712, 4.712, 3.142, 1.571, 3.142],
-        "real_signs":   [1, -1, 1, 1, 1, 1, 1],
-        "gripper_range_rad": [2.317, 3.537],
     },
     "right": {
         "joint_ids": [1, 2, 3, 4, 5, 6, 7],
@@ -67,14 +61,10 @@ ARMS = {
         "sim_offsets": [3.0787, 3.1355, -1.5432, 4.6098, 3.117, 4.7387, 9.3557],
         "sim_signs":   [1, 1, 1, 1, 1, -1, 1],
         "gripper_deg": [145, 189],  # measured open/close range (raw motor deg)
-        "real_offsets": [1.571, 4.712, 1.571, 0.0, 3.142, 1.571, 3.142],
-        "real_signs":   [1, -1, 1, 1, 1, 1, 1],
-        "gripper_range_rad": [2.299, 3.519],
     },
 }
 BAUDRATE = 57600
-HZ_SIM = 60      # sim teleop loop rate
-HZ_ROS = 25      # real-robot publish rate
+HZ_SIM = 60      # teleop loop rate (drives both MuJoCo and the real publish)
 
 # FR3 home pose (7 arm joints) — an uncontrolled ("none") arm holds this.
 FR3_HOME = [0.0, 0.0, 0.0, -1.57079, 0.0, 1.57079, -0.7853]
@@ -190,27 +180,9 @@ def calib_sim(raw_arm: np.ndarray, offsets, signs) -> np.ndarray:
     return c + np.mod(pos - c + np.pi, 2 * np.pi) - np.pi
 
 
-def calib_real(raw_arm: np.ndarray, offsets, signs) -> np.ndarray:
-    """Real-robot calibration — exactly the official ROS2 node's mapping
-    (franka_gello_state_publisher gello_hardware.read_joint_states):
-
-        pos = (raw - best_offsets) * joint_signs
-
-    Absolute, stateless: same physical GELLO pose -> same joint angle every run.
-    No modulo-wrap, no incremental delta, no joint-limit clip — the downstream
-    C++ joint-impedance controller owns limit handling. (The earlier
-    IncrementalCalibrator made the zero point depend on the startup pose, which
-    offset the whole arm by a near-constant ~pi — the 'real teleop wrong' bug.)"""
-    return (np.asarray(raw_arm) - np.asarray(offsets)) * np.asarray(signs)
-
-
 def map_gripper_deg(raw_gripper: float, open_deg: float, close_deg: float) -> float:
     o, c = np.deg2rad(open_deg), np.deg2rad(close_deg)
     return float(np.clip((raw_gripper - o) / (c - o), 0.0, 1.0))
-
-
-def map_gripper_rad(raw_gripper: float, open_rad: float, close_rad: float) -> float:
-    return float(np.clip((raw_gripper - open_rad) / (close_rad - open_rad), 0.0, 1.0))
 
 
 # ============================ MuJoCo dual-arm scene ============================
