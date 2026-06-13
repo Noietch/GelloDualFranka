@@ -78,6 +78,17 @@ class DynamixelRobot(Robot):
         self._last_pos = None
         self._alpha = 0.99
 
+        # Centers of each arm joint's valid range, used to wrap raw motor angles
+        # (known only mod 2*pi) into the reachable band. Panda/FR3 7-DOF centers;
+        # falls back to None (no wrap) for arms with a different joint count.
+        n_arm = len(self._joint_ids) - (1 if self.gripper_open_close is not None else 0)
+        if n_arm == 7:
+            self._joint_range_center = np.array(
+                [0.0, 0.0, 0.0, -1.571, 0.0, 1.866, 0.0]
+            )
+        else:
+            self._joint_range_center = None
+
         if start_joints is not None:
             # loop through all joints and add +- 2pi to the joint offsets to get the closest to start joints
             new_joint_offsets = []
@@ -106,6 +117,16 @@ class DynamixelRobot(Robot):
     def get_joint_state(self) -> np.ndarray:
         pos = (self._driver.get_joints() - self._joint_offsets) * self._joint_signs
         assert len(pos) == self.num_dofs()
+
+        # Wrap arm joints by 2*pi multiples into their valid range. The raw motor
+        # angle is only known mod 2*pi (power-on register), so a joint can read
+        # e.g. 6.27 when it should be -0.02. Without this, joints land outside the
+        # robot's limits and teleop alignment/safety checks fail. Gripper (last
+        # dof when gripper_config set) is excluded — it has its own [0,1] mapping.
+        n_arm = len(pos) - (1 if self.gripper_open_close is not None else 0)
+        if self._joint_range_center is not None:
+            c = self._joint_range_center[:n_arm]
+            pos[:n_arm] = c + np.mod(pos[:n_arm] - c + np.pi, 2 * np.pi) - np.pi
 
         if self.gripper_open_close is not None:
             # map pos to [0, 1]
