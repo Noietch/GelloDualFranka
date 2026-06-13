@@ -1,0 +1,35 @@
+# Unified dual-arm config — one file shared by SIM and real ROS.
+#
+# The `arms` section is the single source of truth for each GELLO leader:
+# its serial port + calibration (offsets/signs/gripper). Set an arm's `port`
+# to `none` to leave it shown-but-uncontrolled.
+#
+#   - Simulation: `backend: sim` is consumed by experiments/run_bimanual.py,
+#     which talks to the MuJoCo node (launch_nodes --robot sim_bimanual_panda).
+#   - Real robot: the arms' port/offset/signs are the same; the ROS2 stack
+#     reads its own robot params separately, but the GELLO calibration here is
+#     authoritative for both. On Linux the ports are /dev/serial/by-id/*.
+#
+# Calibration values must match the physical GELLO on each port — copy from
+# gello/agents/gello_agent.py PORT_CONFIG_MAP for the same device.
+
+backend: sim          # sim | ros
+sim_robot: sim_bimanual_panda
+hz: 60
+
+arms:
+  left:
+    port: none                       # not controlled — shown only
+    joint_ids: [1, 2, 3, 4, 5, 6, 7]
+    joint_offsets: [1.571, 4.712, 4.712, 0.0, 3.142, 4.712, 3.142]
+    joint_signs: [1, 1, 1, 1, 1, -1, 1]
+    gripper_config: [8, 132, 202]
+    start_joints: null
+
+  right:
+    port: /dev/cu.usbserial-10     # macOS; on Linux use /dev/serial/by-id/...; `none` = uncontrolled
+    joint_ids: [1, 2, 3, 4, 5, 6, 7]
+    joint_offsets: [3.0787, 3.1355, -1.5432, 4.6098, 3.117, 4.7387, 9.3557]
+    joint_signs: [1, 1, 1, 1, 1, -1, 1]
+    gripper_config: [8, 132, 202]
+    start_joints: null

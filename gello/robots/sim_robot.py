@@ -51,20 +51,61 @@ def attach_hand_to_arm(
     attachment_site.attach(hand_mjcf)
 
 
-def build_scene(robot_xml_path: str, gripper_xml_path: Optional[str] = None):
-    # assert robot_xml_path.endswith(".xml")
+def _add_floor_and_light(arena):
+    arena.asset.add(
+        "texture", name="groundplane", type="2d", builtin="checker",
+        rgb1=[0.2, 0.3, 0.4], rgb2=[0.1, 0.2, 0.3], width=300, height=300,
+        mark="edge", markrgb=[0.8, 0.8, 0.8],
+    )
+    arena.asset.add(
+        "material", name="groundplane", texture="groundplane",
+        texuniform=True, texrepeat=[5, 5], reflectance=0.2,
+    )
+    arena.worldbody.add(
+        "geom", name="floor", type="plane", size=[0, 0, 0.05], material="groundplane",
+    )
+    arena.worldbody.add(
+        "light", pos=[0, 0, 1.5], dir=[0, 0, -1], directional=True,
+    )
 
-    arena = mjcf.RootElement()
-    arm_simulate = mjcf.from_path(robot_xml_path)
-    # arm_copy = mjcf.from_path(xml_path)
 
+def _attach_arm(arena, robot_xml_path, gripper_xml_path=None, base_quat=None,
+                base_pos=None, name=None):
+    arm = mjcf.from_path(robot_xml_path)
+    if name is not None:
+        arm.model = name  # namespace so dual arms don't collide on element names
     if gripper_xml_path is not None:
-        # attach gripper to the robot at "attachment_site"
-        gripper_simulate = mjcf.from_path(gripper_xml_path)
-        attach_hand_to_arm(arm_simulate, gripper_simulate)
+        attach_hand_to_arm(arm, mjcf.from_path(gripper_xml_path))
+    frame = arena.worldbody.attach(arm)
+    if base_quat is not None:
+        frame.quat = list(base_quat)
+    if base_pos is not None:
+        frame.pos = list(base_pos)
+    return arm
 
-    arena.worldbody.attach(arm_simulate)
-    # arena.worldbody.attach(arm_copy)
+
+def build_scene(robot_xml_path: str, gripper_xml_path: Optional[str] = None,
+                base_quat=None, base_pos=None, arms=None):
+    """Build a MuJoCo scene.
+
+    Single arm (back-compat): pass robot_xml_path (+ optional base_quat/pos).
+    Multi arm: pass `arms` = list of dicts with keys
+        {xml, gripper (opt), quat (opt), pos (opt), name (opt)}.
+    """
+    arena = mjcf.RootElement()
+    _add_floor_and_light(arena)
+
+    if arms is None:
+        arms = [{
+            "xml": robot_xml_path, "gripper": gripper_xml_path,
+            "quat": base_quat, "pos": base_pos, "name": None,
+        }]
+    for spec in arms:
+        _attach_arm(
+            arena, spec["xml"], spec.get("gripper"),
+            base_quat=spec.get("quat"), base_pos=spec.get("pos"),
+            name=spec.get("name"),
+        )
 
     return arena
 
@@ -133,14 +174,18 @@ class ZMQRobotServer:
 class MujocoRobotServer:
     def __init__(
         self,
-        xml_path: str,
+        xml_path: str = None,
         gripper_xml_path: Optional[str] = None,
         host: str = "127.0.0.1",
         port: int = 5556,
         print_joints: bool = False,
+        base_quat=None,
+        base_pos=None,
+        arms=None,
     ):
         self._has_gripper = gripper_xml_path is not None
-        arena = build_scene(xml_path, gripper_xml_path)
+        arena = build_scene(xml_path, gripper_xml_path, base_quat=base_quat,
+                            base_pos=base_pos, arms=arms)
 
         assets: Dict[str, str] = {}
         for asset in arena.asset.all_children():
@@ -157,6 +202,35 @@ class MujocoRobotServer:
         self._data = mujoco.MjData(self._model)
 
         self._num_joints = self._model.nu
+
+        # Map each actuator (command index) to the qpos/qvel address it reads
+        # back from, so observations line up 1:1 with commands. Arm actuators
+        # drive a joint directly; the gripper actuator drives a TENDON (two
+        # finger joints), proxied here by finger_joint1 in the same namespace.
+        # Without this, a dual-arm assembly — each panda adds 2 finger qpos but
+        # only 1 gripper actuator — makes a naive qpos[:nu] slice misaligned, so
+        # the right arm reads the wrong joints (off by the left arm's extra
+        # finger_joint2) and teleop maps garbage.
+        qadr, dadr, grip_ctrl = [], [], []
+        for i in range(self._model.nu):
+            aname = mujoco.mj_id2name(
+                self._model, mujoco.mjtObj.mjOBJ_ACTUATOR, i
+            ) or ""
+            if self._model.actuator_trntype[i] == mujoco.mjtTrn.mjTRN_JOINT:
+                jid = self._model.actuator_trnid[i, 0]
+            else:  # tendon -> gripper; read back the arm's finger_joint1
+                grip_ctrl.append(i)
+                prefix = aname.rsplit("/", 1)[0] + "/" if "/" in aname else ""
+                jid = mujoco.mj_name2id(
+                    self._model, mujoco.mjtObj.mjOBJ_JOINT, prefix + "finger_joint1"
+                )
+                if jid < 0:
+                    jid = 0
+            qadr.append(self._model.jnt_qposadr[jid])
+            dadr.append(self._model.jnt_dofadr[jid])
+        self._obs_qadr = np.array(qadr, dtype=int)
+        self._obs_dadr = np.array(dadr, dtype=int)
+        self._gripper_ctrl_idx = np.array(grip_ctrl, dtype=int)
 
         self._joint_state = np.zeros(self._num_joints)
         self._joint_cmd = self._joint_state
@@ -177,12 +251,13 @@ class MujocoRobotServer:
             f"Expected joint state of length {self._num_joints}, "
             f"got {len(joint_state)}."
         )
-        if self._has_gripper:
-            _joint_state = joint_state.copy()
-            _joint_state[-1] = _joint_state[-1] * 255
-            self._joint_cmd = _joint_state
-        else:
-            self._joint_cmd = joint_state.copy()
+        cmd = np.asarray(joint_state, dtype=float).copy()
+        # Gripper actuator ctrlrange is [0,255]; GELLO sends [0,1]. Scale every
+        # gripper actuator (one per arm), not just the last index — the last
+        # index is the right arm's gripper, leaving the left arm's unscaled.
+        if self._gripper_ctrl_idx.size:
+            cmd[self._gripper_ctrl_idx] = cmd[self._gripper_ctrl_idx] * 255
+        self._joint_cmd = cmd
 
     def freedrive_enabled(self) -> bool:
         return True
@@ -191,8 +266,18 @@ class MujocoRobotServer:
         pass
 
     def get_observations(self) -> Dict[str, np.ndarray]:
-        joint_positions = self._data.qpos.copy()[: self._num_joints]
-        joint_velocities = self._data.qvel.copy()[: self._num_joints]
+        # Index by the per-actuator qpos/qvel map so obs[i] is the joint that
+        # command[i] drives. A flat qpos[:nu] slice misaligns the right arm in a
+        # dual-arm scene (each panda inserts 2 finger qpos but exposes 1 gripper
+        # actuator), which is what made the right arm read the wrong joints.
+        joint_positions = self._data.qpos.copy()[self._obs_qadr]
+        joint_velocities = self._data.qvel.copy()[self._obs_dadr]
+        # Gripper qpos is finger travel in meters (~0..0.04); report it back in
+        # the [0,1] convention the env uses.
+        if self._gripper_ctrl_idx.size:
+            joint_positions[self._gripper_ctrl_idx] = np.clip(
+                joint_positions[self._gripper_ctrl_idx] / 0.04, 0.0, 1.0
+            )
         ee_site = "attachment_site"
         try:
             ee_pos = self._data.site_xpos.copy()[
@@ -207,7 +292,7 @@ class MujocoRobotServer:
             ee_pos = np.zeros(3)
             ee_quat = np.zeros(4)
             ee_quat[0] = 1
-        gripper_pos = self._data.qpos.copy()[self._num_joints - 1]
+        gripper_pos = joint_positions[-1]
         return {
             "joint_positions": joint_positions,
             "joint_velocities": joint_velocities,
@@ -227,7 +312,7 @@ class MujocoRobotServer:
                 self._data.ctrl[:] = self._joint_cmd
                 # self._data.qpos[:] = self._joint_cmd
                 mujoco.mj_step(self._model, self._data)
-                self._joint_state = self._data.qpos.copy()[: self._num_joints]
+                self._joint_state = self._data.qpos.copy()[self._obs_qadr]
 
                 if self._print_joints:
                     print(self._joint_state)

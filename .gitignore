@@ -15,6 +15,7 @@
 *wandb*
 *wandb_logs*
 outputs/*
+arena.xml
 
 # python
 *__pycache__
@@ -38,3 +39,5 @@ third_party/i2rt/
 
 # 3D Model Files
 *.stl
+
+work_dirs/*
