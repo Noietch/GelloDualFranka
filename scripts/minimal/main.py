@@ -123,7 +123,7 @@ def sync_robot() -> None:
         def __init__(self):
             super().__init__("gello_sync_robot")
             for name in G.ARMS:
-                topic = G.ROBOT_STATE_TOPIC.format(ns=name)
+                topic = G.ROBOT_STATE_TOPIC
                 self.create_subscription(
                     JointState, topic,
                     lambda msg, n=name: latest.__setitem__(n, list(msg.position[:7])),

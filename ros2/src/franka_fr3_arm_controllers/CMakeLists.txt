@@ -33,7 +33,6 @@ find_package(rclcpp_lifecycle REQUIRED)
 find_package(hardware_interface REQUIRED)
 find_package(franka_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
-find_package(franka_semantic_components REQUIRED)
 find_package(moveit_core REQUIRED)
 find_package(moveit_msgs REQUIRED)
 
@@ -55,7 +54,6 @@ ament_target_dependencies(
         pluginlib
         rclcpp
         rclcpp_lifecycle
-        franka_semantic_components
         moveit_core
         moveit_msgs
 )

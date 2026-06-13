@@ -41,8 +41,8 @@ SIM_ARM_BASE = {
 # "none" = arm shown in sim / skipped on real, but not controlled by a GELLO.
 PORTS = {
     "Darwin": {"left": "none", "right": "/dev/cu.usbserial-10"},
-    "Linux":  {"left": "/dev/serial/by-id/<FILL_IN_LEFT_GELLO>",
-               "right": "/dev/serial/by-id/<FILL_IN_RIGHT_GELLO>"},
+    "Linux":  {"left": "none",
+               "right": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"},
 }
 
 # Per-arm calibration. joint_ids = 7 arm servos; gripper_id = the gripper servo.
@@ -81,7 +81,7 @@ FR3_HOME = [0.0, 0.0, 0.0, -1.57079, 0.0, 1.57079, -0.7853]
 
 # ROS2 topics (mode sync-robot subscribes / mode teleop-robot publishes).
 # {ns} is filled with the arm namespace ("left"/"right").
-ROBOT_STATE_TOPIC = "{ns}/franka/joint_states"   # subscribe (sync-robot)
+ROBOT_STATE_TOPIC = "/franka/joint_states"   # subscribe (sync-robot)
 GELLO_PUB_TOPIC   = "{ns}/gello/joint_states"     # publish   (teleop-robot)
 GRIPPER_TOPIC     = "{ns}/gripper/gripper_client/target_gripper_width_percent"
 FR3_JOINT_NAMES = [f"fr3_joint{i}" for i in range(1, 8)]
