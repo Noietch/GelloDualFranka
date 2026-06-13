@@ -1,0 +1,10 @@
+# minimal_zmq dependencies (pure-Python; no ROS, no gello package).
+# dynamixel-sdk is NOT here — installed from the in-repo submodule by 00_setup.sh
+# (third_party/DynamixelSDK/python).
+# franky-control is NOT here — Linux + PREEMPT_RT only (steps 2 & 3, real robot);
+# install it manually on the robot PC:  pip install franky-control
+numpy
+pyzmq
+mujoco
+dm_control
+imageio[ffmpeg]
