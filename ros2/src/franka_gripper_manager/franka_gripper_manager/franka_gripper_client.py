@@ -40,11 +40,13 @@ class GripperClient(Node):
         self._MAX_GRIPPER_WIDTH_PERCENT = 1.0
         self._max_width = 0.0
 
-        # The gripper always chases the most recent target instead of running each
-        # Move to completion before accepting the next one — that serial lock made
-        # the hand lag the GELLO by one full open/close motion.
+        # The gripper chases the most recent target. The franka Move server accepts
+        # every goal on its own thread (it never rejects-as-busy), but concurrent
+        # Moves race on the hardware — so we keep at most one goal in flight and
+        # PREEMPT it (cancel -> stop -> resend) the moment the target diverges,
+        # instead of waiting for the stale motion to finish like the old code did.
         self.declare_parameter("publish_rate_hz", 15.0)
-        self.declare_parameter("command_deadband_m", 0.003)
+        self.declare_parameter("command_deadband_m", 0.005)
         self.declare_parameter("move_speed", 1.0)
         self._publish_rate_hz = (
             self.get_parameter("publish_rate_hz").get_parameter_value().double_value
@@ -55,7 +57,9 @@ class GripperClient(Node):
         self._move_speed = self.get_parameter("move_speed").get_parameter_value().double_value
         self._target_width = None       # latest desired width (m), set by callback
         self._inflight_width = None      # width the active/sent goal is aiming at
-        self._goal_active = False
+        self._goal_handle = None         # handle of the in-flight goal (for cancel)
+        self._goal_active = False        # a goal is sent and not yet finished
+        self._cancel_requested = False   # cancel sent for the in-flight goal
 
         self.get_logger().info("Initializing gripper client...")
         self._home_gripper(homing_action_topic)
@@ -136,11 +140,24 @@ class GripperClient(Node):
         self._target_width = self._max_width * new_open_width_percent
 
     def _control_loop(self) -> None:
-        """Fixed-rate chase of the latest target. Skips while a goal is in flight
-        so we never queue stale setpoints; sends a fresh Move only when the target
-        moved past the deadband."""
-        if self._target_width is None or self._goal_active:
+        """Fixed-rate chase of the latest target. If a goal is in flight and the
+        target has moved past the deadband, preempt it (cancel -> the server stops
+        the hand) so the next tick can send a Move toward the fresh target. If no
+        goal is in flight, send straight away."""
+        if self._target_width is None:
             return
+
+        if self._goal_active:
+            if self._goal_handle is None or self._cancel_requested:
+                return  # goal just sent (no handle yet) or already cancelling
+            if (
+                self._inflight_width is not None
+                and abs(self._target_width - self._inflight_width) >= self._command_deadband
+            ):
+                self._cancel_requested = True
+                self._goal_handle.cancel_goal_async().add_done_callback(self._cancel_done)
+            return
+
         if (
             self._inflight_width is not None
             and abs(self._target_width - self._inflight_width) < self._command_deadband
@@ -148,12 +165,18 @@ class GripperClient(Node):
             return
         self._send_gripper_command(self._target_width)
 
+    def _cancel_done(self, _future: rclpy.task.Future) -> None:
+        # The cancelled goal's result callback clears _goal_active; if the result
+        # races ahead this is a no-op. Either way the next tick resends.
+        self._cancel_requested = False
+
     def _send_gripper_command(self, gripper_position: float) -> None:
         goal_msg = Move.Goal()
         goal_msg.width = gripper_position
         goal_msg.speed = self._move_speed
         self._inflight_width = gripper_position
         self._goal_active = True
+        self._goal_handle = None
         self._future = self._action_client.send_goal_async(goal_msg)
         self._future.add_done_callback(self._gripper_response_callback)
 
@@ -162,15 +185,19 @@ class GripperClient(Node):
 
         if not goal_handle.accepted:
             self._goal_active = False
+            self._goal_handle = None
             self._inflight_width = None
             self.get_logger().warn("Move goal rejected; will retry on next tick")
             return
 
+        self._goal_handle = goal_handle
         self._get_result_future = goal_handle.get_result_async()
         self._get_result_future.add_done_callback(self._get_result_callback)
 
     def _get_result_callback(self, future: rclpy.task.Future) -> None:
         self._goal_active = False
+        self._goal_handle = None
+        self._cancel_requested = False
 
 
 def main(args=None):
